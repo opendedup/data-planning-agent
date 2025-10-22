@@ -9,6 +9,7 @@ import logging
 from typing import Optional
 
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 from ..models.prp_schema import DataProductRequirementPrompt
 from ..models.session import PlanningSession
@@ -51,13 +52,21 @@ class GeminiClient:
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel(model_name)
 
+        # Disable safety filters for all categories
+        self.safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+
         if context:
             logger.info(
                 f"Initialized Gemini client with model: {model_name} "
-                f"(with {len(context)} chars of context)"
+                f"(with {len(context)} chars of context, safety filters disabled)"
             )
         else:
-            logger.info(f"Initialized Gemini client with model: {model_name}")
+            logger.info(f"Initialized Gemini client with model: {model_name} (safety filters disabled)")
 
     def _build_prompt_with_context(self, base_prompt: str) -> str:
         """
@@ -128,6 +137,7 @@ Generate your questions now:"""
                     temperature=self.temperature,
                     max_output_tokens=1000,
                 ),
+                safety_settings=self.safety_settings,
             )
             
             # Check if response was blocked
@@ -207,6 +217,7 @@ Provide your response now (either "COMPLETE" or your questions):"""
                     temperature=self.temperature,
                     max_output_tokens=1000,
                 ),
+                safety_settings=self.safety_settings,
             )
             
             # Check if response was blocked
@@ -305,6 +316,7 @@ Generate the complete Data PRP now, following the exact format above:"""
                     temperature=0.3,  # Lower temperature for structured output
                     max_output_tokens=2000,
                 ),
+                safety_settings=self.safety_settings,
             )
             
             # Check if response was blocked
