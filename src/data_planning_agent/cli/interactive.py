@@ -1,0 +1,241 @@
+"""
+Interactive CLI for Planning Agent
+
+Provides a command-line interface for testing the planning conversation flow.
+"""
+
+import asyncio
+import logging
+import sys
+from typing import Optional
+
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.prompt import Prompt
+
+from ..clients.gemini_client import GeminiClient
+from ..clients.storage_client import StorageClient
+from ..core.conversation import ConversationManager
+from ..core.prp_generator import PRPGenerator
+from ..core.refiner import RequirementRefiner
+from ..mcp.config import load_config
+
+logger = logging.getLogger(__name__)
+console = Console()
+
+
+class InteractiveCLI:
+    """
+    Interactive command-line interface for planning sessions.
+    """
+
+    def __init__(self):
+        """Initialize the interactive CLI."""
+        # Load configuration
+        self.config = load_config()
+
+        # Load organizational context if configured
+        from ..clients.context_loader import load_context_from_directory
+
+        context = load_context_from_directory(self.config.context_dir)
+
+        # Initialize clients
+        self.gemini_client = GeminiClient(
+            api_key=self.config.gemini_api_key,
+            model_name=self.config.gemini_model,
+            temperature=0.7,
+            context=context,
+        )
+        self.storage_client = StorageClient(default_output_dir=self.config.output_dir)
+
+        # Initialize conversation manager
+        self.conversation_manager = ConversationManager()
+
+        # Initialize refiner
+        self.refiner = RequirementRefiner(
+            gemini_client=self.gemini_client,
+            conversation_manager=self.conversation_manager,
+            max_turns=self.config.max_conversation_turns,
+        )
+
+        # Initialize PRP generator
+        self.prp_generator = PRPGenerator(
+            gemini_client=self.gemini_client, storage_client=self.storage_client
+        )
+
+    def display_welcome(self) -> None:
+        """Display welcome message."""
+        welcome_text = """
+# Data Planning Agent - Interactive Mode
+
+Welcome! I'll help you create a comprehensive **Data Product Requirement Prompt** (Data PRP)
+through a conversational process.
+
+## How it works:
+
+1. 📝 Tell me your initial business intent or goal
+2. 💬 I'll ask clarifying questions (mostly multiple choice)
+3. ✅ Once I have enough information, we'll generate your Data PRP
+4. 💾 The final document will be saved for use with the Data Discovery Agent
+
+Let's get started!
+        """
+        console.print(Panel(Markdown(welcome_text), title="Welcome", border_style="blue"))
+        console.print()
+
+    async def run(self) -> None:
+        """Run the interactive planning session."""
+        try:
+            # Display welcome
+            self.display_welcome()
+
+            # Get initial intent
+            console.print("[bold cyan]Step 1:[/bold cyan] What is your business intent or goal?")
+            console.print(
+                "[dim]Example: We want to provide the merchandising team insights into trending items[/dim]"
+            )
+            console.print()
+
+            initial_intent = Prompt.ask("Your business intent")
+
+            if not initial_intent.strip():
+                console.print("[red]❌ Intent cannot be empty. Exiting.[/red]")
+                return
+
+            console.print()
+            console.print("[yellow]⏳ Starting planning session...[/yellow]")
+            console.print()
+
+            # Start session
+            session_id, questions = await self.refiner.start_session(initial_intent)
+
+            console.print(
+                Panel(
+                    f"[green]✨ Session Started![/green]\n\nSession ID: [cyan]{session_id}[/cyan]",
+                    border_style="green",
+                )
+            )
+            console.print()
+
+            # Conversation loop
+            is_complete = False
+            turn_count = 0
+
+            while not is_complete and turn_count < self.config.max_conversation_turns:
+                # Display questions
+                console.print(Panel(Markdown(questions), title="Questions", border_style="cyan"))
+                console.print()
+
+                # Get user response
+                console.print("[bold cyan]Your response:[/bold cyan]")
+                console.print(
+                    "[dim]Tip: For multiple choice, include the letter (a, b, c, d) and any additional details[/dim]"
+                )
+                console.print()
+
+                user_response = Prompt.ask("Response")
+
+                if not user_response.strip():
+                    console.print("[red]Response cannot be empty. Please try again.[/red]")
+                    console.print()
+                    continue
+
+                console.print()
+                console.print("[yellow]⏳ Processing your response...[/yellow]")
+                console.print()
+
+                # Continue conversation
+                next_questions, is_complete = await self.refiner.continue_conversation(
+                    session_id, user_response
+                )
+
+                questions = next_questions
+                turn_count += 1
+
+            # Check completion status
+            if is_complete:
+                console.print(
+                    Panel(
+                        "[green]✅ Requirements gathering complete![/green]\n\n"
+                        "I now have enough information to generate your Data PRP.",
+                        border_style="green",
+                    )
+                )
+            else:
+                console.print(
+                    Panel(
+                        "[yellow]⚠️ Maximum conversation turns reached.[/yellow]\n\n"
+                        "Proceeding to generate Data PRP with available information.",
+                        border_style="yellow",
+                    )
+                )
+            console.print()
+
+            # Ask about output path
+            console.print("[bold cyan]Step 2:[/bold cyan] Where should I save the Data PRP?")
+            console.print(
+                f"[dim]Default: {self.config.output_dir} (press Enter to use default)[/dim]"
+            )
+            console.print("[dim]Or provide a custom path (GCS: gs://bucket/path or local path)[/dim]")
+            console.print()
+
+            output_path = Prompt.ask("Output path", default="")
+            output_path = output_path.strip() if output_path else None
+
+            console.print()
+            console.print("[yellow]⏳ Generating Data Product Requirement Prompt...[/yellow]")
+            console.print()
+
+            # Get session
+            session = self.refiner.get_session(session_id)
+
+            # Generate PRP
+            prp_content, file_path = await self.prp_generator.generate_prp(
+                session=session, output_path=output_path, save_to_file=True
+            )
+
+            # Display success
+            console.print(
+                Panel(
+                    f"[green]✅ Data PRP Generated Successfully![/green]\n\n"
+                    f"📄 Saved to: [cyan]{file_path}[/cyan]",
+                    border_style="green",
+                )
+            )
+            console.print()
+
+            # Display preview
+            console.print("[bold]Preview of your Data PRP:[/bold]")
+            console.print()
+            console.print(Panel(Markdown(prp_content), border_style="blue"))
+            console.print()
+
+            console.print("[green]✨ All done! You can now use this Data PRP with the Data Discovery Agent.[/green]")
+
+        except KeyboardInterrupt:
+            console.print()
+            console.print("[yellow]Session interrupted by user. Goodbye![/yellow]")
+            sys.exit(0)
+        except Exception as e:
+            logger.error(f"Error in interactive CLI: {e}", exc_info=True)
+            console.print(f"[red]❌ Error: {str(e)}[/red]")
+            sys.exit(1)
+
+
+def main() -> None:
+    """Main entry point for the interactive CLI."""
+    # Set up logging
+    logging.basicConfig(
+        level=logging.WARNING,  # Use WARNING to reduce noise in interactive mode
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    # Run interactive CLI
+    cli = InteractiveCLI()
+    asyncio.run(cli.run())
+
+
+if __name__ == "__main__":
+    main()
+
