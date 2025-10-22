@@ -217,6 +217,16 @@ Let's get started!
             console.print()
             console.print("[yellow]Session interrupted by user. Goodbye![/yellow]")
             sys.exit(0)
+        except ValueError as e:
+            # User-friendly errors (like safety filter blocks)
+            console.print()
+            console.print(f"[yellow]⚠️  {str(e)}[/yellow]")
+            console.print()
+            console.print("[dim]Tip: Try rephrasing your input to be more general and avoid:[/dim]")
+            console.print("[dim]  • Specific names of people or organizations[/dim]")
+            console.print("[dim]  • Gambling or betting-related topics[/dim]")
+            console.print("[dim]  • Potentially controversial subjects[/dim]")
+            sys.exit(1)
         except Exception as e:
             logger.error(f"Error in interactive CLI: {e}", exc_info=True)
             console.print(f"[red]❌ Error: {str(e)}[/red]")

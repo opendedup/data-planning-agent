@@ -129,9 +129,30 @@ Generate your questions now:"""
                     max_output_tokens=1000,
                 ),
             )
+            
+            # Check if response was blocked
+            if not response.candidates or not response.candidates[0].content.parts:
+                finish_reason = response.candidates[0].finish_reason if response.candidates else None
+                if finish_reason == 2:  # SAFETY
+                    logger.warning("Response blocked by safety filters")
+                    raise ValueError(
+                        "The response was blocked by safety filters. Please try rephrasing "
+                        "your intent in more general terms, avoiding specific names or "
+                        "potentially sensitive topics."
+                    )
+                else:
+                    logger.warning(f"Response blocked with finish_reason: {finish_reason}")
+                    raise ValueError(
+                        f"The AI couldn't generate a response (reason: {finish_reason}). "
+                        "Please try rephrasing your intent."
+                    )
+            
             questions = response.text.strip()
             logger.debug(f"Generated initial questions ({len(questions)} chars)")
             return questions
+        except ValueError:
+            # Re-raise ValueError (our custom errors)
+            raise
         except Exception as e:
             logger.error(f"Error generating initial questions: {e}", exc_info=True)
             raise
@@ -187,6 +208,23 @@ Provide your response now (either "COMPLETE" or your questions):"""
                     max_output_tokens=1000,
                 ),
             )
+            
+            # Check if response was blocked
+            if not response.candidates or not response.candidates[0].content.parts:
+                finish_reason = response.candidates[0].finish_reason if response.candidates else None
+                if finish_reason == 2:  # SAFETY
+                    logger.warning("Response blocked by safety filters")
+                    raise ValueError(
+                        "The response was blocked by safety filters. Please try rephrasing "
+                        "your responses in more general terms."
+                    )
+                else:
+                    logger.warning(f"Response blocked with finish_reason: {finish_reason}")
+                    raise ValueError(
+                        f"The AI couldn't generate a response (reason: {finish_reason}). "
+                        "Please try rephrasing."
+                    )
+            
             result = response.text.strip()
 
             # Check if complete
@@ -197,6 +235,9 @@ Provide your response now (either "COMPLETE" or your questions):"""
             logger.debug(f"Generated follow-up questions ({len(result)} chars)")
             return (result, False)
 
+        except ValueError:
+            # Re-raise ValueError (our custom errors)
+            raise
         except Exception as e:
             logger.error(f"Error generating follow-up questions: {e}", exc_info=True)
             raise
@@ -265,9 +306,28 @@ Generate the complete Data PRP now, following the exact format above:"""
                     max_output_tokens=2000,
                 ),
             )
+            
+            # Check if response was blocked
+            if not response.candidates or not response.candidates[0].content.parts:
+                finish_reason = response.candidates[0].finish_reason if response.candidates else None
+                if finish_reason == 2:  # SAFETY
+                    logger.warning("Response blocked by safety filters")
+                    raise ValueError(
+                        "The Data PRP generation was blocked by safety filters. "
+                        "Please review your conversation for potentially sensitive content."
+                    )
+                else:
+                    logger.warning(f"Response blocked with finish_reason: {finish_reason}")
+                    raise ValueError(
+                        f"The AI couldn't generate the Data PRP (reason: {finish_reason})."
+                    )
+            
             data_prp = response.text.strip()
             logger.info(f"Generated Data PRP ({len(data_prp)} chars)")
             return data_prp
+        except ValueError:
+            # Re-raise ValueError (our custom errors)
+            raise
         except Exception as e:
             logger.error(f"Error generating Data PRP: {e}", exc_info=True)
             raise
