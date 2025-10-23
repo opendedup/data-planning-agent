@@ -29,7 +29,6 @@ ruff = "^0.1.0"
 
 [tool.poetry.scripts]
 planning-agent = "data_planning_agent.cli.interactive:main"
-planning-agent-http = "data_planning_agent.mcp.cli:main"
 
 [build-system]
 requires = ["poetry-core"]
