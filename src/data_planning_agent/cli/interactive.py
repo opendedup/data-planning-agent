@@ -32,6 +32,10 @@ class InteractiveCLI:
 
     def __init__(self):
         """Initialize the interactive CLI."""
+        # Ensure environment variables are loaded before config
+        from dotenv import load_dotenv
+        load_dotenv()
+        
         # Load configuration
         self.config = load_config()
 
@@ -40,12 +44,25 @@ class InteractiveCLI:
 
         context = load_context_from_directory(self.config.context_dir)
 
+        # Initialize Vertex AI Search client for data catalog queries
+        vertex_search_client = None
+        if self.config.vertex_project_id and self.config.vertex_datastore_id:
+            from ..clients.vertex_search_client import VertexSearchClient
+            
+            vertex_search_client = VertexSearchClient(
+                project_id=self.config.vertex_project_id,
+                location=self.config.vertex_datastore_location,
+                datastore_id=self.config.vertex_datastore_id,
+            )
+
         # Initialize clients
         self.gemini_client = GeminiClient(
             api_key=self.config.gemini_api_key,
             model_name=self.config.gemini_model,
             temperature=0.7,
             context=context,
+            vertex_search_client=vertex_search_client,
+            enable_reflection=self.config.enable_question_reflection,
         )
         self.storage_client = StorageClient(default_output_dir=self.config.output_dir)
 
@@ -158,10 +175,65 @@ Let's get started!
                 console.print(
                     Panel(
                         "[green]✅ Requirements gathering complete![/green]\n\n"
-                        "I now have enough information to generate your Data PRP.",
+                        "I believe I have enough information to generate your Data PRP.",
                         border_style="green",
                     )
                 )
+                console.print()
+                
+                # Show conversation summary
+                session = self.refiner.get_session(session_id)
+                console.print("[bold]Conversation Summary:[/bold]")
+                console.print(Panel(session.get_conversation_text(), border_style="dim"))
+                console.print()
+                
+                # Ask for user confirmation
+                console.print("[bold cyan]Confirmation:[/bold cyan]")
+                console.print(
+                    "[dim]This is your last chance to add important details or corrections.[/dim]"
+                )
+                console.print()
+                
+                proceed = Prompt.ask(
+                    "Shall I proceed with generating the final requirement prompt?",
+                    choices=["y", "n"],
+                    default="y"
+                )
+                
+                if proceed.lower() == "n":
+                    console.print()
+                    console.print("[yellow]Let's gather more details...[/yellow]")
+                    console.print()
+                    console.print("[bold cyan]What additional information would you like to add?[/bold cyan]")
+                    console.print()
+                    
+                    additional_info = Prompt.ask("Additional details")
+                    
+                    if additional_info.strip():
+                        console.print()
+                        console.print("[yellow]⏳ Processing additional information...[/yellow]")
+                        console.print()
+                        
+                        # Continue conversation with additional info
+                        next_questions, is_complete = await self.refiner.continue_conversation(
+                            session_id, additional_info
+                        )
+                        
+                        if is_complete:
+                            console.print(
+                                Panel(
+                                    "[green]✅ Additional information captured![/green]\n\n"
+                                    "Ready to generate your Data PRP.",
+                                    border_style="green",
+                                )
+                            )
+                        else:
+                            console.print(Panel(Markdown(next_questions), title="Follow-up", border_style="cyan"))
+                            console.print()
+                            console.print("[yellow]Please continue the conversation above, then we'll proceed to generation.[/yellow]")
+                            return
+                    
+                console.print()
             else:
                 console.print(
                     Panel(
@@ -235,9 +307,15 @@ Let's get started!
 
 def main() -> None:
     """Main entry point for the interactive CLI."""
+    # Load environment variables first
+    from dotenv import load_dotenv
+    load_dotenv()
+    
     # Set up logging
+    import os
+    log_level = os.getenv("LOG_LEVEL", "WARNING").upper()
     logging.basicConfig(
-        level=logging.WARNING,  # Use WARNING to reduce noise in interactive mode
+        level=getattr(logging, log_level),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 

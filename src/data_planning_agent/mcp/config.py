@@ -67,7 +67,7 @@ class PlanningAgentConfig(BaseModel):
 
     # Conversation Configuration
     max_conversation_turns: int = Field(
-        default_factory=lambda: int(os.getenv("MAX_CONVERSATION_TURNS", "10")),
+        default_factory=lambda: int(os.getenv("MAX_CONVERSATION_TURNS", "3")),
         description="Maximum conversation turns before forcing completion",
     )
 
@@ -75,6 +75,39 @@ class PlanningAgentConfig(BaseModel):
     context_dir: Optional[str] = Field(
         default_factory=lambda: os.getenv("CONTEXT_DIR"),
         description="Optional directory containing organizational context markdown files (local or GCS)",
+    )
+
+    # Vertex AI Search Datastore Configuration (for grounding)
+    vertex_project_id: str = Field(
+        default_factory=lambda: os.getenv("VERTEX_PROJECT_ID", ""),
+        description="GCP project ID for Vertex AI Search datastore",
+    )
+
+    vertex_datastore_location: str = Field(
+        default_factory=lambda: os.getenv("VERTEX_DATASTORE_LOCATION", "global"),
+        description="Location of Vertex AI Search datastore",
+    )
+
+    vertex_datastore_id: str = Field(
+        default_factory=lambda: os.getenv("VERTEX_DATASTORE_ID", ""),
+        description="Vertex AI Search datastore ID for data grounding",
+    )
+
+    # Search Fan-out Configuration
+    enable_search_fanout: bool = Field(
+        default_factory=lambda: os.getenv("ENABLE_SEARCH_FANOUT", "true").lower() == "true",
+        description="Enable intelligent search fan-out when no results found",
+    )
+
+    search_fanout_count: int = Field(
+        default_factory=lambda: int(os.getenv("SEARCH_FANOUT_COUNT", "4")),
+        description="Number of related queries to generate for fan-out",
+    )
+
+    # Question Reflection Configuration
+    enable_question_reflection: bool = Field(
+        default_factory=lambda: os.getenv("ENABLE_QUESTION_REFLECTION", "true").lower() == "true",
+        description="Enable question reflection/self-correction for higher quality questions",
     )
 
     # Logging Configuration
@@ -92,6 +125,8 @@ class PlanningAgentConfig(BaseModel):
         """
         required_fields = {
             "gemini_api_key": self.gemini_api_key,
+            "vertex_project_id": self.vertex_project_id,
+            "vertex_datastore_id": self.vertex_datastore_id,
         }
 
         missing = [field for field, value in required_fields.items() if not value]

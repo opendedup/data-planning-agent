@@ -25,7 +25,7 @@ class RequirementRefiner:
         self,
         gemini_client: GeminiClient,
         conversation_manager: ConversationManager,
-        max_turns: int = 10,
+        max_turns: int = 3,
     ):
         """
         Initialize requirement refiner.
@@ -95,14 +95,8 @@ class RequirementRefiner:
         # Add user response
         session.add_turn("user", user_response)
 
-        # Check if we've hit max turns
-        if session.get_turn_count() >= self.max_turns:
-            logger.warning(f"Session {session_id} reached max turns, forcing completion")
-            session.is_complete = True
-            self.conversation_manager.update_session(session)
-            return ("Maximum conversation turns reached. Proceeding to generate Data PRP.", True)
-
         # Generate follow-up questions or determine completion
+        # Agent's assessment takes priority over turn count
         questions, is_complete = await self.gemini_client.generate_follow_up_questions(session)
 
         # Add assistant turn
@@ -111,7 +105,19 @@ class RequirementRefiner:
         # Update completion status
         if is_complete:
             session.is_complete = True
-            logger.info(f"Session {session_id} requirements complete")
+            logger.info(f"Session {session_id} requirements complete (agent-driven)")
+        
+        # Check if we've hit max turns as circuit breaker
+        elif session.get_turn_count() >= self.max_turns:
+            logger.warning(f"Session {session_id} reached max turns circuit breaker, forcing completion")
+            session.is_complete = True
+            is_complete = True
+            questions = (
+                "⚠️ Maximum conversation turns reached (circuit breaker activated).\n\n"
+                "I'll work with the information gathered so far to generate your Data PRP. "
+                "You can refine it further after generation if needed.\n\n"
+                f"{questions}"
+            )
 
         # Update session
         self.conversation_manager.update_session(session)

@@ -10,6 +10,7 @@ packages = [{include = "data_planning_agent", from = "src"}]
 python = ">=3.10,<3.13"
 google-generativeai = "^0.8.0"
 google-cloud-storage = "^2.10.0"
+google-cloud-discoveryengine = "^0.11.0"
 mcp = "^1.0.0"
 fastapi = "^0.115.0"
 uvicorn = {extras = ["standard"], version = "^0.32.0"}
@@ -28,6 +29,7 @@ ruff = "^0.1.0"
 
 [tool.poetry.scripts]
 planning-agent = "data_planning_agent.cli.interactive:main"
+planning-agent-http = "data_planning_agent.mcp.cli:main"
 
 [build-system]
 requires = ["poetry-core"]

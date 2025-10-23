@@ -127,13 +127,36 @@ I'll help you refine your requirements through a series of questions. Please pro
 
             # Format response based on completion status
             if is_complete:
+                # Get session for summary
+                session = self.refiner.get_session(session_id)
+                conversation_summary = session.get_conversation_text() if session else "N/A"
+                
                 response = f"""✅ Requirements Gathering Complete!
 
 {next_questions}
 
-You now have enough information to generate a comprehensive Data Product Requirement Prompt.
+---
 
-**Next Step:** Use the `generate_data_prp` tool with session ID `{session_id}` to create the final document."""
+## Conversation Summary
+
+{conversation_summary}
+
+---
+
+## What's Next?
+
+I believe I have enough information to generate a comprehensive Data Product Requirement Prompt.
+
+**Please review the conversation above.** This is your opportunity to:
+- Add any crucial details I might have missed
+- Make corrections or clarifications
+- Refine any aspects of the requirements
+
+**Options:**
+1. **Proceed**: Use the `generate_data_prp` tool with session ID `{session_id}` to create the final document
+2. **Add more details**: Use `continue_conversation` again with additional information (even though marked complete, I can accept more input)
+
+When you're ready, call `generate_data_prp` to create your Data PRP."""
             else:
                 response = f"""📝 Let's continue refining the requirements...
 

@@ -60,6 +60,18 @@ def create_mcp_server(config: PlanningAgentConfig | None = None) -> Server:
     else:
         logger.info("No organizational context loaded")
 
+    # Initialize Vertex AI Search client for data catalog queries
+    vertex_search_client = None
+    if config.vertex_project_id and config.vertex_datastore_id:
+        logger.info("Initializing Vertex AI Search client...")
+        from ..clients.vertex_search_client import VertexSearchClient
+        
+        vertex_search_client = VertexSearchClient(
+            project_id=config.vertex_project_id,
+            location=config.vertex_datastore_location,
+            datastore_id=config.vertex_datastore_id,
+        )
+    
     # Initialize clients
     logger.info("Initializing Gemini client...")
     gemini_client = GeminiClient(
@@ -67,6 +79,8 @@ def create_mcp_server(config: PlanningAgentConfig | None = None) -> Server:
         model_name=config.gemini_model,
         temperature=0.7,
         context=context,
+        vertex_search_client=vertex_search_client,
+        enable_reflection=config.enable_question_reflection,
     )
 
     logger.info("Initializing storage client...")
@@ -196,6 +210,10 @@ def run_server() -> None:
     - stdio: For local development (asyncio)
     - http: For containerized deployment (uvicorn)
     """
+    # Ensure environment variables are loaded before config
+    from dotenv import load_dotenv
+    load_dotenv()
+    
     # Load config to determine transport mode
     config = load_config()
 

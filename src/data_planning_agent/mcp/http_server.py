@@ -62,6 +62,18 @@ async def lifespan(app: FastAPI) -> None:
     else:
         logger.info("No organizational context loaded")
 
+    # Initialize Vertex AI Search client for data catalog queries
+    vertex_search_client = None
+    if config_instance.vertex_project_id and config_instance.vertex_datastore_id:
+        logger.info("Initializing Vertex AI Search client...")
+        from ..clients.vertex_search_client import VertexSearchClient
+        
+        vertex_search_client = VertexSearchClient(
+            project_id=config_instance.vertex_project_id,
+            location=config_instance.vertex_datastore_location,
+            datastore_id=config_instance.vertex_datastore_id,
+        )
+    
     # Initialize clients and handlers
     logger.info("Initializing Gemini client...")
     gemini_client = GeminiClient(
@@ -69,6 +81,8 @@ async def lifespan(app: FastAPI) -> None:
         model_name=config_instance.gemini_model,
         temperature=0.7,
         context=context,
+        vertex_search_client=vertex_search_client,
+        enable_reflection=config_instance.enable_question_reflection,
     )
 
     logger.info("Initializing storage client...")
