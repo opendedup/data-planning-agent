@@ -27,6 +27,22 @@ class DataRequirements(BaseModel):
         default_factory=list, description="How data should be segmented"
     )
     filters: List[str] = Field(default_factory=list, description="Conditions and constraints")
+    data_gaps: List["DataGap"] = Field(
+        default_factory=list, description="List of identified data gaps"
+    )
+
+
+class DataGap(BaseModel):
+    """Represents a single identified data gap."""
+
+    gap_id: str = Field(description="Unique identifier for the data gap, e.g., 'gap_01'")
+    description: str = Field(description="Explanation of what data is missing")
+    target_view: str = Field(
+        description="The target view affected by this gap, e.g., 'live_bet_performance'"
+    )
+    required_information: str = Field(
+        description="Detailed description of the data needed to resolve the gap, including potential columns and their purpose."
+    )
 
 
 class SuccessCriteria(BaseModel):
@@ -119,4 +135,15 @@ class DataProductRequirementPrompt(BaseModel):
         lines.append("")
 
         return "\n".join(lines)
+
+
+class PRPAnalysisResult(BaseModel):
+    """Structured result from the first-pass analysis of the user conversation."""
+
+    target_views: List[dict] = Field(
+        description="List of conceptual target views or tables that need to be created."
+    )
+    data_gaps: List[DataGap] = Field(
+        description="List of identified data gaps that need to be resolved."
+    )
 

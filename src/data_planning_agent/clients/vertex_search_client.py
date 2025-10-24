@@ -44,6 +44,18 @@ class SearchResult:
         self.column_count = metadata.get("column_count")
         self.has_pii = metadata.get("has_pii", False)
         self.has_phi = metadata.get("has_phi", False)
+        
+        # Extract enriched schema fields
+        self.schema = metadata.get("schema", [])
+        self.analytical_insights = metadata.get("analytical_insights", [])
+        self.column_profiles = metadata.get("column_profiles", [])
+        self.lineage = metadata.get("lineage", [])
+        self.key_metrics = metadata.get("key_metrics", [])
+        self.environment = metadata.get("environment", "unknown")
+        self.table_type = metadata.get("table_type", "TABLE")
+        self.size_bytes = metadata.get("size_bytes")
+        self.last_modified = metadata.get("last_modified")
+        self.created = metadata.get("created")
 
 
 class VertexSearchClient:
@@ -86,6 +98,53 @@ class VertexSearchClient:
             f"Initialized VertexSearchClient for project={project_id}, "
             f"datastore={datastore_id}"
         )
+    
+    def _convert_proto_to_dict(self, obj: Any) -> Any:
+        """
+        Recursively convert proto-plus objects to Python dicts.
+        
+        Handles MapComposite, RepeatedComposite, and other proto-plus wrappers
+        that Google Cloud libraries use.
+        
+        Args:
+            obj: Proto-plus object or primitive value
+            
+        Returns:
+            Native Python type (dict, list, or primitive)
+        """
+        # Handle None
+        if obj is None:
+            return None
+        
+        # Handle primitive types
+        if isinstance(obj, (str, int, float, bool)):
+            return obj
+        
+        # Handle dict-like objects (MapComposite)
+        if hasattr(obj, 'items'):
+            try:
+                return {key: self._convert_proto_to_dict(value) for key, value in obj.items()}
+            except Exception:
+                # If items() fails, try to convert as-is
+                pass
+        
+        # Handle list-like objects (RepeatedComposite)
+        if hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, dict)):
+            try:
+                return [self._convert_proto_to_dict(item) for item in obj]
+            except Exception:
+                # If iteration fails, return as-is
+                pass
+        
+        # Try to convert to dict if it has __dict__
+        if hasattr(obj, '__dict__'):
+            try:
+                return self._convert_proto_to_dict(dict(obj.__dict__))
+            except Exception:
+                pass
+        
+        # Return as-is if no conversion worked
+        return obj
     
     def search(
         self,
@@ -135,14 +194,26 @@ class VertexSearchClient:
                 if struct_data is None:
                     struct_data = {}
                 
+                # Convert proto-plus objects to Python dict (handles nested structures)
+                metadata_dict = self._convert_proto_to_dict(struct_data)
+                if not isinstance(metadata_dict, dict):
+                    metadata_dict = {}
+                
+                # Construct semantic ID from components (project.dataset.table)
+                # rather than using Vertex AI's sanitized ID (project_dataset_table)
+                project_id = metadata_dict.get("project_id", "")
+                dataset_id = metadata_dict.get("dataset_id", "")
+                table_id = metadata_dict.get("table_id", "")
+                semantic_id = f"{project_id}.{dataset_id}.{table_id}"
+                
                 # Extract snippet
                 snippet = self._extract_snippet(response_item, document)
                 
                 # Create result
                 result = SearchResult(
-                    document_id=document.id,
+                    document_id=semantic_id,
                     snippet=snippet,
-                    metadata=dict(struct_data),
+                    metadata=metadata_dict,
                 )
                 
                 results.append(result)
@@ -153,6 +224,75 @@ class VertexSearchClient:
         except Exception as e:
             logger.error(f"Search failed: {e}")
             return []
+    
+    def format_schema_preview(
+        self,
+        schema: List[Dict[str, Any]],
+        max_fields: int = 5,
+    ) -> str:
+        """
+        Format schema fields as a preview.
+        
+        Args:
+            schema: List of field definitions
+            max_fields: Maximum number of fields to show
+            
+        Returns:
+            Formatted schema preview string
+        """
+        if not schema:
+            return ""
+        
+        lines = []
+        for field in schema[:max_fields]:
+            field_name = field.get("name", "unknown")
+            field_type = field.get("type", "unknown")
+            field_desc = field.get("description", "")
+            sample_values = field.get("sample_values", [])
+            
+            # Build field line
+            parts = [f"- {field_name} ({field_type})"]
+            
+            if field_desc:
+                # Clean up auto-generated descriptions
+                desc = field_desc.replace(f"{field_name} - ", "").replace(f" - {field_type} field", "")
+                if desc and desc != field_name:
+                    parts.append(f": {desc}")
+            
+            # Add sample values if available and useful
+            if sample_values and len(sample_values) > 0:
+                samples = [str(v) for v in sample_values[:3] if v]
+                if samples:
+                    parts.append(f" [samples: {', '.join(samples)}]")
+            
+            lines.append("".join(parts))
+        
+        if not lines:
+            return ""
+        
+        return "Key Fields:\n" + "\n".join(lines)
+    
+    def format_analytical_insights(
+        self,
+        insights: List[str],
+        max_insights: int = 3,
+    ) -> str:
+        """
+        Format analytical insights as a preview.
+        
+        Args:
+            insights: List of analytical insight questions
+            max_insights: Maximum number of insights to show
+            
+        Returns:
+            Formatted insights string
+        """
+        if not insights:
+            return ""
+        
+        lines = [f"- {insight}" for insight in insights[:max_insights]]
+        
+        return "Example Analyses:\n" + "\n".join(lines)
     
     def _extract_snippet(
         self,
@@ -207,7 +347,7 @@ class VertexSearchClient:
             include_technical_details: Whether to include row counts, etc.
         
         Returns:
-            Formatted context string (without table names)
+            Formatted context string with schema and insights
         """
         if not results:
             return "No directly matching data found in the catalog."
@@ -239,6 +379,22 @@ class VertexSearchClient:
                 context_parts.append(f"{i}. {' '.join(desc_parts)}: {content}")
             else:
                 context_parts.append(f"{i}. {' '.join(desc_parts)}")
+            
+            # Add schema preview if available
+            if result.schema:
+                schema_preview = self.format_schema_preview(result.schema, max_fields=5)
+                if schema_preview:
+                    # Indent the schema preview
+                    indented = "\n   ".join(schema_preview.split("\n"))
+                    context_parts.append(f"   {indented}")
+            
+            # Add analytical insights if available
+            if result.analytical_insights:
+                insights_preview = self.format_analytical_insights(result.analytical_insights, max_insights=3)
+                if insights_preview:
+                    # Indent the insights
+                    indented = "\n   ".join(insights_preview.split("\n"))
+                    context_parts.append(f"   {indented}")
         
         return "\n".join(context_parts)
     

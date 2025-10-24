@@ -8,12 +8,14 @@ requirement gathering and Data PRP generation.
 import asyncio
 import logging
 from typing import Any, Optional
+import json
 
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 from ..models.prp_schema import DataProductRequirementPrompt
 from ..models.session import PlanningSession
+from ..models.prp_schema import PRPAnalysisResult
 
 logger = logging.getLogger(__name__)
 
@@ -297,85 +299,141 @@ Current search query:"""
         
         return False
     
-    def _format_data_references(self, datastore_context: str) -> str:
+    def _build_detailed_data_section(
+        self,
+        search_results: list,
+        datastore_context: str,
+        analysis_result: PRPAnalysisResult,
+    ) -> str:
         """
-        Extract and format table/field references from datastore context.
+        Build detailed data requirements section with conceptual target views and data gaps.
+        """
+        # Format Target Views from analysis
+        target_views_md = []
+        for view in analysis_result.target_views:
+            schema_md = "\n".join(
+                f"  - `{col.get('column_name')}` ({col.get('data_type', 'UNKNOWN')}): {col.get('description', '')}"
+                for col in view.get("schema", [])
+            )
+            calculated_fields_md = "\n".join(
+                f"  - {field}" for field in view.get("calculated_fields", [])
+            )
+            
+            view_md = f"""**View Name**: `{view.get('view_name')}`
+- **Purpose**: {view.get('purpose')}
+- **Grain**: {view.get('grain')}
+- **Schema**:\n{schema_md}"""
+            if calculated_fields_md:
+                view_md += f"\n- **Calculated Fields**:\n{calculated_fields_md}"
+            target_views_md.append(view_md)
+        
+        target_views_section = "\n\n---\n\n".join(target_views_md)
+
+        # Format Data Gaps from analysis into a JSON block for machine parsing
+        data_gaps_section = ""
+        if analysis_result.data_gaps:
+            gaps_dict = analysis_result.model_dump(include={'data_gaps'})
+            gaps_json = json.dumps(gaps_dict, indent=2)
+            data_gaps_section = f"""### Data Gaps and Limitations
+```json
+{gaps_json}
+```"""
+
+        # Build the "Available Source Data" section from search results
+        available_sources = ""
+        if search_results:
+            # Deduplicate by table_id to avoid showing the same table multiple times
+            seen_tables = {}
+            for result in search_results:
+                if not result.table_id:
+                    continue
+                # Skip if we've already added this table
+                if result.table_id not in seen_tables:
+                    seen_tables[result.table_id] = result
+            
+            source_sections = []
+            for result in seen_tables.values():
+                source_info = [f"- **`{result.table_id}`**"]
+                
+                if result.description:
+                    desc_summary = result.description[:150] + "..." if len(result.description) > 150 else result.description
+                    source_info.append(f"  - {desc_summary}")
+                
+                metadata_parts = []
+                if result.row_count:
+                    metadata_parts.append(f"{result.row_count:,} records")
+                if result.column_count:
+                    metadata_parts.append(f"{result.column_count} columns")
+                if result.has_pii:
+                    metadata_parts.append("contains PII")
+                
+                if metadata_parts:
+                    source_info.append(f"  - Metadata: {', '.join(metadata_parts)}")
+                
+                if result.schema:
+                    key_cols = [f"`{field.get('name')}`" for field in result.schema[:5]]
+                    if key_cols:
+                        more_indicator = f" (and {len(result.schema) - 5} more)" if len(result.schema) > 5 else ""
+                        source_info.append(f"  - Key columns: {', '.join(key_cols)}{more_indicator}")
+                
+                source_sections.append("\n".join(source_info))
+            
+            available_sources = "\n\n".join(source_sections) if source_sections else ""
+        
+        if not available_sources:
+            available_sources = "- No specific data catalog information available"
+
+        return f"""### Target Views/Tables
+{target_views_section}
+
+{data_gaps_section}
+
+### Available Source Data (For Reference)
+The following existing tables could potentially be used as source data:
+
+{available_sources}"""
+    
+    def _format_data_references(self, search_results: list) -> str:
+        """
+        Format table and field references from search results using structured schema.
         
         Creates a natural language summary of found tables and their key fields
         to make questions more data-aware and grounded.
         
         Args:
-            datastore_context: Raw datastore context string
+            search_results: List of SearchResult objects
             
         Returns:
-            Natural language summary like: "tables `x`, `y`, and `z`. Table `z` 
-            has promising fields like `sales_data`, `region`, and `product_category`"
+            Natural language summary like: "table `nba_team_defend_stats` 
+            with fields like `team_name`, `d_fg_pct`, and `pct_plusminus`"
         """
-        if not datastore_context or len(datastore_context.strip()) < 10:
+        if not search_results:
             return ""
         
-        # Simple extraction - look for patterns like "Table: xyz" or markdown tables
-        # This is a heuristic approach since we don't have structured data
+        # Get first result with schema
+        result = None
+        for r in search_results:
+            if r.schema:
+                result = r
+                break
         
-        lines = datastore_context.split('\n')
-        table_names = []
-        
-        for line in lines:
-            # Look for table names (common patterns in catalog outputs)
-            if 'table' in line.lower() and ':' in line:
-                # Extract table name from patterns like "Table: xyz" or "table_id: xyz"
-                parts = line.split(':')
-                if len(parts) >= 2:
-                    table_name = parts[1].strip().split()[0].strip('`').strip()
-                    if table_name and len(table_name) < 100:  # Sanity check
-                        table_names.append(table_name)
-        
-        # If we found no tables through pattern matching, try to extract from first few lines
-        if not table_names and lines:
-            # Sometimes table names appear in first line or title
-            for line in lines[:5]:
-                words = line.split()
-                for word in words:
-                    cleaned = word.strip('`*-_:.,')
-                    if cleaned and len(cleaned) > 3 and '_' in cleaned:
-                        table_names.append(cleaned)
-                        break
-                if table_names:
-                    break
-        
-        # Deduplicate and limit to first 3
-        table_names = list(dict.fromkeys(table_names))[:3]
-        
-        if not table_names:
+        if not result or not result.table_id:
             return ""
         
-        # Format naturally
-        if len(table_names) == 1:
-            summary = f"a table `{table_names[0]}`"
-        elif len(table_names) == 2:
-            summary = f"tables `{table_names[0]}` and `{table_names[1]}`"
-        else:
-            summary = f"tables `{table_names[0]}`, `{table_names[1]}`, and `{table_names[2]}`"
+        summary = f"table `{result.table_id}`"
         
-        # Try to extract some field names from the last table
-        # Look for common field patterns in the context
-        fields = []
-        if table_names:
-            # Search for field-like words near the last table
-            last_section = '\n'.join(lines[-20:])  # Look in last 20 lines
-            common_field_patterns = ['region', 'product', 'category', 'date', 'sales', 
-                                     'revenue', 'customer', 'user', 'time', 'status',
-                                     'price', 'quantity', 'name', 'id', 'type']
-            
-            for pattern in common_field_patterns:
-                if pattern in last_section.lower():
-                    fields.append(pattern)
-                    if len(fields) >= 3:
-                        break
-        
-        if fields:
-            field_text = ", ".join(f"`{f}`" for f in fields[:3])
-            summary = f"{summary}. Table `{table_names[-1]}` has some promising fields like {field_text}"
+        # Extract key fields (first 5 from schema)
+        if result.schema:
+            field_names = [f.get('name', '') for f in result.schema[:5] if f.get('name')]
+            if field_names:
+                if len(field_names) == 1:
+                    field_text = f"`{field_names[0]}`"
+                elif len(field_names) == 2:
+                    field_text = f"`{field_names[0]}` and `{field_names[1]}`"
+                else:
+                    field_text = ", ".join(f"`{f}`" for f in field_names[:-1]) + f", and `{field_names[-1]}`"
+                
+                summary = f"{summary} with fields like {field_text}"
         
         return summary
 
@@ -384,7 +442,7 @@ Current search query:"""
         query: str, 
         max_results: int = 5,
         enable_fanout: bool = True,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, list]:
         """
         Query Vertex AI Search datastore with intelligent fan-out.
         
@@ -394,12 +452,13 @@ Current search query:"""
             enable_fanout: Whether to use fan-out strategy on no results
             
         Returns:
-            Tuple of (context_type, formatted_context) where:
+            Tuple of (context_type, formatted_context, raw_results) where:
             - context_type: "exact_match", "related_match", or "no_match"
             - formatted_context: Context string for prompt
+            - raw_results: List of SearchResult objects for structured access
         """
         if not self.vertex_search_client:
-            return ("no_client", "")
+            return ("no_client", "", [])
         
         try:
             if not enable_fanout:
@@ -407,9 +466,9 @@ Current search query:"""
                 results = self.vertex_search_client.search(query, max_results)
                 if results:
                     context = self.vertex_search_client.format_results_for_context(results, True)
-                    return ("exact_match", context)
+                    return ("exact_match", context, results)
                 else:
-                    return ("no_match", "No matching data found in the catalog.")
+                    return ("no_match", "No matching data found in the catalog.", [])
             
             # Fan-out search strategy
             # 1. Generate related queries
@@ -424,9 +483,9 @@ Current search query:"""
                 results = self.vertex_search_client.search(query, max_results)
                 if results:
                     context = self.vertex_search_client.format_results_for_context(results, True)
-                    return ("exact_match", context)
+                    return ("exact_match", context, results)
                 else:
-                    return ("no_match", "No matching data found in the catalog.")
+                    return ("no_match", "No matching data found in the catalog.", [])
             
             # 2. Execute fan-out search
             fanout_results = self.vertex_search_client.search_with_fanout(
@@ -441,12 +500,18 @@ Current search query:"""
                 original_query=query,
             )
             
+            # 4. Extract all results for structured access
+            all_results = []
+            all_results.extend(fanout_results.get("primary", []))
+            for related_results in fanout_results.get("related", {}).values():
+                all_results.extend(related_results)
+            
             logger.info(f"Datastore query type: {context_type}")
-            return (context_type, formatted_context)
+            return (context_type, formatted_context, all_results)
             
         except Exception as e:
             logger.warning(f"Failed to query datastore: {e}", exc_info=True)
-            return ("error", "")
+            return ("error", "", [])
 
     def _classify_product_type_sync(self, intent: str) -> str:
         """
@@ -514,12 +579,28 @@ Respond with ONLY the letter (A, B, C, or D):"""
         )
         
         # Query datastore with fan-out (run in thread pool to avoid blocking async event loop)
-        context_type, datastore_context = await asyncio.to_thread(
+        context_type, datastore_context, search_results = await asyncio.to_thread(
             self._query_datastore,
             initial_intent, 
             max_results=5,
             enable_fanout=True
         )
+        
+        # Extract analytical insights from search results
+        insights = []
+        for result in search_results:
+            if result.analytical_insights:
+                insights.extend(result.analytical_insights[:2])  # Top 2 per result
+        
+        # Build insights section if we have any
+        insights_section = ""
+        if insights:
+            insights_section = f"""
+EXAMPLE ANALYSES FROM CATALOG:
+{chr(10).join(f'- {insight}' for insight in insights[:3])}
+
+These show the types of analyses this data commonly supports.
+"""
         
         # Build product-type-specific guidance
         if product_type == 'A':  # One-time analysis
@@ -557,7 +638,7 @@ DO NOT ask for specific current values - focus on what to MONITOR."""
         if context_type == "exact_match":
             # Found exact match - guide toward that data
             # Extract data references for natural language integration
-            data_summary = self._format_data_references(datastore_context)
+            data_summary = self._format_data_references(search_results)
             data_intro = f"I found {data_summary} that may be relevant." if data_summary else "I found some data that may be relevant."
             
             prompt = f"""You are an expert data analyst helping define a DATA PRODUCT.
@@ -570,6 +651,7 @@ AVAILABLE DATA (exact match):
 {data_intro}
 
 {datastore_context}
+{insights_section}
 
 Ask up to 3 questions to define the DATA PRODUCT STRUCTURE (not to gather specific inputs).
 
@@ -594,7 +676,7 @@ Generate your questions now:"""
         elif context_type == "related_match":
             # Found related data - present as alternative
             # Extract data references for natural language integration
-            data_summary = self._format_data_references(datastore_context)
+            data_summary = self._format_data_references(search_results)
             data_intro = f"I found {data_summary} that might be related." if data_summary else "I found some related data."
             
             prompt = f"""You are an expert data analyst helping define a DATA PRODUCT.
@@ -607,6 +689,7 @@ RELATED DATA FOUND:
 {data_intro}
 
 {datastore_context}
+{insights_section}
 
 Ask up to 3 questions to define the DATA PRODUCT:
 1. Whether the related data could meet their needs
@@ -774,17 +857,37 @@ Generate your questions now:"""
         
         # Query datastore with synthesized search query (run in thread pool to avoid blocking async event loop)
         if search_query:
-            context_type, datastore_context = await asyncio.to_thread(
+            context_type, datastore_context, search_results = await asyncio.to_thread(
                 self._query_datastore,
                 search_query,
                 max_results=5,
                 enable_fanout=True
             )
         else:
-            context_type, datastore_context = ("no_client", "")
+            context_type, datastore_context, search_results = ("no_client", "", [])
+        
+        # Extract available fields from search results for validation
+        available_fields = set()
+        for result in search_results:
+            if result.schema:
+                for field in result.schema:
+                    if 'name' in field:
+                        available_fields.add(field['name'])
+        
+        # Build schema section if we have fields
+        schema_section = ""
+        if available_fields:
+            field_list = ', '.join(sorted(list(available_fields)[:15]))  # Show up to 15 fields
+            schema_section = f"""
+
+AVAILABLE FIELDS IN DATA:
+{field_list}
+
+Use these to validate what metrics and dimensions are actually available.
+"""
         
         # Build prompt with datastore context
-        context_section = f"\n\nAVAILABLE DATA:\n{datastore_context}\n" if datastore_context else "\n"
+        context_section = f"\n\nAVAILABLE DATA:\n{datastore_context}{schema_section}\n" if datastore_context else "\n"
 
         prompt = f"""You are an expert data analyst defining a DATA PRODUCT (not answering a one-time question).
 
@@ -911,6 +1014,69 @@ Provide your response now (either "COMPLETE" or your questions):"""
             logger.error(f"Error generating follow-up questions: {e}", exc_info=True)
             raise
 
+    async def _analyze_requirements(self, session: PlanningSession) -> PRPAnalysisResult:
+        """
+        First pass of PRP generation: Analyze conversation and extract structured data.
+
+        Args:
+            session: The planning session with conversation history
+
+        Returns:
+            A PRPAnalysisResult object with structured target views and data gaps.
+        """
+        conversation_text = session.get_conversation_text()
+        prompt = f"""Analyze the following conversation and generate a structured JSON object that defines the data requirements.
+
+Conversation:
+{conversation_text}
+
+Your task is to identify two key things:
+1.  **Target Views**: The conceptual data views the user wants to create.
+2.  **Data Gaps**: Any critical missing information needed to build those views.
+
+Respond with a JSON object that follows this exact schema:
+{{
+    "target_views": [
+        {{
+            "view_name": "...",
+            "purpose": "...",
+            "grain": "...",
+            "schema": [
+                {{"column_name": "...", "data_type": "...", "description": "..."}}
+            ],
+            "calculated_fields": ["..."]
+        }}
+    ],
+    "data_gaps": [
+        {{
+            "gap_id": "gap_01",
+            "description": "e.g., Missing source for game outcomes (Win/Loss/Push)",
+            "target_view": "e.g., live_bet_performance",
+            "required_information": "A source table containing final game scores (e.g., team_score, opponent_score) and a game identifier to join on."
+        }}
+    ]
+}}
+
+Provide ONLY the JSON object in your response.
+"""
+        try:
+            response = await asyncio.to_thread(
+                self.model.generate_content,
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1, response_mime_type="application/json"
+                ),
+                safety_settings=self.safety_settings,
+            )
+            if not response.candidates or not response.candidates[0].content.parts:
+                raise ValueError("Failed to analyze requirements: empty response from Gemini.")
+            
+            analysis_json = response.text.strip()
+            return PRPAnalysisResult.parse_raw(analysis_json)
+        except Exception as e:
+            logger.error(f"Error during requirements analysis: {e}", exc_info=True)
+            raise
+
     async def generate_data_prp(self, session: PlanningSession) -> str:
         """
         Generate a complete Data Product Requirement Prompt from conversation.
@@ -923,6 +1089,11 @@ Provide your response now (either "COMPLETE" or your questions):"""
         """
         conversation_text = session.get_conversation_text()
         
+        # Step 1: Analyze requirements to get structured data
+        analysis_result = await self._analyze_requirements(session)
+
+        # Step 2: Use the analysis to generate the final PRP
+        
         # Always synthesize from full conversation for final assessment
         # This ensures we capture the complete evolved understanding with all details
         logger.info("Synthesizing search query for final data availability assessment")
@@ -934,15 +1105,19 @@ Provide your response now (either "COMPLETE" or your questions):"""
             search_query = initial_intent
         
         if search_query:
-            # Run in thread pool to avoid blocking async event loop
-            context_type, datastore_context = await asyncio.to_thread(
+            context_type, datastore_context, search_results = await asyncio.to_thread(
                 self._query_datastore,
                 search_query,
                 max_results=5,
                 enable_fanout=True
             )
         else:
-            context_type, datastore_context = ("no_client", "")
+            context_type, datastore_context, search_results = ("no_client", "", [])
+        
+        # Build detailed data requirements section using the structured analysis
+        detailed_data_section = self._build_detailed_data_section(
+            search_results, datastore_context, analysis_result
+        )
         
         # Build prompt with datastore context
         context_section = f"\n\nAVAILABLE DATA:\n{datastore_context}\n" if datastore_context else "\n"
@@ -989,12 +1164,15 @@ Show how someone would USE this product:
 - How they make decisions with it
 
 ## 9. Data Requirements
-Based on available data:
-{datastore_context if datastore_context else "- No specific data catalog information available"}
 
-- What data sources are needed?
-- What gaps exist (if any)?
-- What assumptions are made?
+{detailed_data_section}
+
+**Assessment:**
+- How well do the available source tables cover the target view requirements?
+- What transformations or joins are needed to build the target views?
+- What data gaps or limitations exist?
+- What assumptions are being made about data availability and quality?
+- Are there any data quality considerations (PII, PHI, freshness, completeness)?
 
 ---
 
@@ -1004,6 +1182,13 @@ IMPORTANT DISTINCTIONS:
 
 - **Product Definition**: "Metrics include: revenue, growth rate, customer acquisition cost, market share"
 - **NOT Instance Values**: "Product A has $2.8M revenue and 15% growth"
+
+IMPORTANT FOR SECTION 9 (Data Requirements):
+- Define CONCEPTUAL target views/tables that need to be CREATED (don't exist yet)
+- These represent the desired OUTPUT data structure for the data product
+- Use "Available Source Data" section to show what existing tables could be used as INPUTS
+- Target views should answer the analytical questions from the requirements
+- Do NOT directly copy existing table schemas into the target views section
 
 NOTE: This Data PRP focuses on DATA requirements only. Visualization and presentation format will be handled by the Presentation Planning Agent.
 
