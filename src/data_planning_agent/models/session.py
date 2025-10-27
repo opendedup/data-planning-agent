@@ -80,6 +80,14 @@ class PlanningSession(BaseModel):
         default=None, description="Path where Data PRP was saved"
     )
 
+    source_prp: Optional[str] = Field(
+        default=None, description="Original PRP content if this is a modification session"
+    )
+
+    assumptions: List[str] = Field(
+        default_factory=list, description="Assumptions and defaults made during planning"
+    )
+
     def add_turn(self, speaker: str, content: str) -> ConversationTurn:
         """
         Add a turn to the conversation.
@@ -145,4 +153,20 @@ class PlanningSession(BaseModel):
             Number of turns
         """
         return len(self.conversation_history)
+
+    def add_assumption(self, description: str) -> str:
+        """
+        Add an assumption with auto-incrementing ID.
+
+        Args:
+            description: Description of the assumption
+
+        Returns:
+            The formatted assumption string with ID
+        """
+        assumption_id = len(self.assumptions) + 1
+        formatted_assumption = f"[ASSUMPTION-{assumption_id:02d}]: {description}"
+        self.assumptions.append(formatted_assumption)
+        self.updated_at = datetime.now(timezone.utc)
+        return formatted_assumption
 

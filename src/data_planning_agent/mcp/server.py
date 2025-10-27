@@ -20,6 +20,7 @@ from .handlers import MCPHandlers
 from .tools import (
     CONTINUE_CONVERSATION_TOOL,
     GENERATE_DATA_PRP_TOOL,
+    MODIFY_EXISTING_PRP_TOOL,
     START_PLANNING_SESSION_TOOL,
     get_available_tools,
     validate_tool_params,
@@ -144,6 +145,9 @@ def create_mcp_server(config: PlanningAgentConfig | None = None) -> Server:
 
             elif name == GENERATE_DATA_PRP_TOOL:
                 return await handlers.handle_generate_data_prp(arguments)
+
+            elif name == MODIFY_EXISTING_PRP_TOOL:
+                return await handlers.handle_modify_existing_prp(arguments)
 
             else:
                 error_msg = f"Unknown tool: {name}"

@@ -59,7 +59,7 @@ class MCPHandlers:
             gemini_client=gemini_client, storage_client=storage_client
         )
 
-        logger.info("Initialized MCP handlers")
+        logger.info(f"Initialized MCP handlers with MAX_CONVERSATION_TURNS={config.max_conversation_turns}")
 
     async def handle_start_planning_session(
         self, arguments: Dict[str, Any]
@@ -224,6 +224,69 @@ When you're ready, call `generate_data_prp` to create your Data PRP."""
             return [TextContent(type="text", text=f"❌ Error: {str(e)}")]
         except Exception as e:
             logger.error(f"Error in handle_generate_data_prp: {e}", exc_info=True)
+            return [TextContent(type="text", text=f"❌ Error: {str(e)}")]
+
+    async def handle_modify_existing_prp(
+        self, arguments: Dict[str, Any]
+    ) -> List[TextContent]:
+        """
+        Handle modify_existing_prp tool call.
+
+        Args:
+            arguments: Tool arguments
+
+        Returns:
+            List of TextContent responses
+        """
+        try:
+            existing_prp = arguments["existing_prp"]
+            requested_changes = arguments["requested_changes"]
+
+            logger.info(f"Starting PRP modification session (PRP length: {len(existing_prp)}, changes: {requested_changes[:100]}...)")
+
+            # Construct combined initial intent with both PRP and requested changes
+            combined_intent = f"""I have an existing Data Product Requirement Prompt (Data PRP) that I would like to modify.
+
+Here is the existing PRP:
+
+{existing_prp}
+
+---
+
+Requested changes:
+
+{requested_changes}
+
+Please help me refine these modifications to the PRP."""
+
+            # Start session using existing flow
+            session_id, questions = await self.refiner.start_session(combined_intent)
+
+            # Get the session and store the original PRP for reference
+            session = self.refiner.get_session(session_id)
+            if session:
+                session.source_prp = existing_prp
+                self.conversation_manager.update_session(session)
+
+            # Format response
+            response = f"""✨ PRP Modification Session Started!
+
+**Session ID:** `{session_id}`
+
+I'll help you refine your modifications to the existing PRP through a series of questions. I have the original PRP as context and understand your requested changes.
+
+---
+
+{questions}
+
+---
+
+**Next Step:** Use the `continue_conversation` tool with this session ID and your responses to continue."""
+
+            return [TextContent(type="text", text=response)]
+
+        except Exception as e:
+            logger.error(f"Error in handle_modify_existing_prp: {e}", exc_info=True)
             return [TextContent(type="text", text=f"❌ Error: {str(e)}")]
 
 

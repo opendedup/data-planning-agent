@@ -1103,6 +1103,12 @@ Provide ONLY the JSON object in your response.
         if not search_query:
             initial_intent = session.initial_intent if hasattr(session, 'initial_intent') else ""
             search_query = initial_intent
+            
+            # Log assumption about search query fallback
+            session.add_assumption(
+                "Used initial user intent for data search as conversation synthesis "
+                "did not produce a refined query."
+            )
         
         if search_query:
             context_type, datastore_context, search_results = await asyncio.to_thread(
@@ -1111,6 +1117,13 @@ Provide ONLY the JSON object in your response.
                 max_results=5,
                 enable_fanout=True
             )
+            
+            # Log assumption if no datastore results found
+            if not search_results or len(search_results) == 0:
+                session.add_assumption(
+                    "No matching data assets found in catalog. Data requirements are based on "
+                    "user description only."
+                )
         else:
             context_type, datastore_context, search_results = ("no_client", "", [])
         
@@ -1121,12 +1134,19 @@ Provide ONLY the JSON object in your response.
         
         # Build prompt with datastore context
         context_section = f"\n\nAVAILABLE DATA:\n{datastore_context}\n" if datastore_context else "\n"
+        
+        # Build assumptions section for prompt
+        tracked_assumptions = ""
+        if session.assumptions:
+            tracked_assumptions = "\n\nTracked Assumptions from Planning Process:\n" + "\n".join(
+                f"- {assumption}" for assumption in session.assumptions
+            )
 
         prompt = f"""Generate a Data Product Requirement Prompt (Data PRP) from this conversation.
 
 Conversation:
 {conversation_text}
-{context_section}
+{context_section}{tracked_assumptions}
 
 CRITICAL: This PRP defines a DATA PRODUCT, not a one-time query result.
 
@@ -1173,6 +1193,24 @@ Show how someone would USE this product:
 - What data gaps or limitations exist?
 - What assumptions are being made about data availability and quality?
 - Are there any data quality considerations (PII, PHI, freshness, completeness)?
+
+## 10. Assumptions & Defaults
+
+Document all assumptions and default choices made during planning. Use the format [ASSUMPTION-01], [ASSUMPTION-02], etc.
+
+REQUIRED: Include these tracked assumptions from the planning process:
+{tracked_assumptions if session.assumptions else "- No assumptions were tracked during the planning process."}
+
+ALSO identify and list any additional implicit assumptions from the conversation, such as:
+- Default values chosen when user didn't specify (e.g., "closing" vs "opening" lines)
+- Data availability assumptions (e.g., assuming certain fields exist)
+- Time period defaults (e.g., defaulting to "current season" if not specified)
+- Calculation method assumptions (e.g., which confidence metric to use)
+- Scope assumptions (e.g., "all games" vs specific subset)
+
+Example format:
+- [ASSUMPTION-01]: User did not specify opening vs closing Vegas lines. Defaulted to 'closing_vegas_spread' for backtesting stability.
+- [ASSUMPTION-02]: Assumed game_id can be used as a consistent primary key across all required data sources.
 
 ---
 

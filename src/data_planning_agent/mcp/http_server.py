@@ -20,6 +20,7 @@ from .handlers import MCPHandlers
 from .tools import (
     CONTINUE_CONVERSATION_TOOL,
     GENERATE_DATA_PRP_TOOL,
+    MODIFY_EXISTING_PRP_TOOL,
     START_PLANNING_SESSION_TOOL,
     validate_tool_params,
 )
@@ -284,6 +285,8 @@ def create_http_app() -> FastAPI:
                     result = await handlers_instance.handle_continue_conversation(arguments)
                 elif tool_name == GENERATE_DATA_PRP_TOOL:
                     result = await handlers_instance.handle_generate_data_prp(arguments)
+                elif tool_name == MODIFY_EXISTING_PRP_TOOL:
+                    result = await handlers_instance.handle_modify_existing_prp(arguments)
                 else:
                     return {
                         "jsonrpc": "2.0",
@@ -372,6 +375,8 @@ def create_http_app() -> FastAPI:
                 result = await handlers_instance.handle_continue_conversation(arguments)
             elif tool_name == GENERATE_DATA_PRP_TOOL:
                 result = await handlers_instance.handle_generate_data_prp(arguments)
+            elif tool_name == MODIFY_EXISTING_PRP_TOOL:
+                result = await handlers_instance.handle_modify_existing_prp(arguments)
             else:
                 raise HTTPException(status_code=404, detail=f"Unknown tool: {tool_name}")
 

@@ -10,15 +10,18 @@ import pytest
 from data_planning_agent.mcp.config import PlanningAgentConfig, load_config
 
 
-def test_config_defaults() -> None:
+def test_config_defaults(monkeypatch) -> None:
     """Test that configuration has sensible defaults."""
+    # Clear any environment variable that might be set
+    monkeypatch.delenv("MAX_CONVERSATION_TURNS", raising=False)
+    
     config = PlanningAgentConfig()
 
     assert config.gemini_model == "gemini-2.5-pro"
     assert config.mcp_transport == "stdio"
     assert config.mcp_host == "0.0.0.0"
     assert config.mcp_port == 8080
-    assert config.max_conversation_turns == 10
+    assert config.max_conversation_turns == 3
     assert config.log_level == "INFO"
 
 

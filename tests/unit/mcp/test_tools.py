@@ -9,6 +9,7 @@ import pytest
 from data_planning_agent.mcp.tools import (
     CONTINUE_CONVERSATION_TOOL,
     GENERATE_DATA_PRP_TOOL,
+    MODIFY_EXISTING_PRP_TOOL,
     START_PLANNING_SESSION_TOOL,
     get_available_tools,
     validate_tool_params,
@@ -19,12 +20,13 @@ def test_get_available_tools() -> None:
     """Test that all tools are returned."""
     tools = get_available_tools()
 
-    assert len(tools) == 3
+    assert len(tools) == 4
 
     tool_names = [tool.name for tool in tools]
     assert START_PLANNING_SESSION_TOOL in tool_names
     assert CONTINUE_CONVERSATION_TOOL in tool_names
     assert GENERATE_DATA_PRP_TOOL in tool_names
+    assert MODIFY_EXISTING_PRP_TOOL in tool_names
 
 
 def test_tool_schemas_complete() -> None:
@@ -117,4 +119,55 @@ def test_validate_unknown_tool() -> None:
 
     with pytest.raises(ValueError, match="Unknown tool"):
         validate_tool_params(params, "unknown_tool")
+
+
+def test_validate_modify_existing_prp_valid() -> None:
+    """Test validation of valid modify_existing_prp params."""
+    params = {
+        "existing_prp": "# Data PRP\n\nSome content here...",
+        "requested_changes": "Add geographic breakdown by state",
+    }
+
+    # Should not raise
+    validate_tool_params(params, MODIFY_EXISTING_PRP_TOOL)
+
+
+def test_validate_modify_existing_prp_missing_prp() -> None:
+    """Test validation fails when existing_prp is missing."""
+    params = {"requested_changes": "Add geographic breakdown"}
+
+    with pytest.raises(ValueError, match="Missing required parameter: existing_prp"):
+        validate_tool_params(params, MODIFY_EXISTING_PRP_TOOL)
+
+
+def test_validate_modify_existing_prp_missing_changes() -> None:
+    """Test validation fails when requested_changes is missing."""
+    params = {"existing_prp": "# Data PRP\n\nContent"}
+
+    with pytest.raises(ValueError, match="Missing required parameter: requested_changes"):
+        validate_tool_params(params, MODIFY_EXISTING_PRP_TOOL)
+
+
+def test_validate_modify_existing_prp_empty_prp() -> None:
+    """Test validation fails when existing_prp is empty."""
+    params = {"existing_prp": "   ", "requested_changes": "Add something"}
+
+    with pytest.raises(ValueError, match="existing_prp cannot be empty"):
+        validate_tool_params(params, MODIFY_EXISTING_PRP_TOOL)
+
+
+def test_validate_modify_existing_prp_empty_changes() -> None:
+    """Test validation fails when requested_changes is empty."""
+    params = {"existing_prp": "# Data PRP\n\nContent", "requested_changes": "   "}
+
+    with pytest.raises(ValueError, match="requested_changes cannot be empty"):
+        validate_tool_params(params, MODIFY_EXISTING_PRP_TOOL)
+
+
+def test_validate_modify_existing_prp_wrong_type() -> None:
+    """Test validation fails when parameters are wrong type."""
+    params = {"existing_prp": 123, "requested_changes": "Add something"}
+
+    with pytest.raises(ValueError, match="existing_prp must be a string"):
+        validate_tool_params(params, MODIFY_EXISTING_PRP_TOOL)
 

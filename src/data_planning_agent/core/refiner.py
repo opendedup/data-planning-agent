@@ -112,6 +112,13 @@ class RequirementRefiner:
             logger.warning(f"Session {session_id} reached max turns circuit breaker, forcing completion")
             session.is_complete = True
             is_complete = True
+            
+            # Log assumption about incomplete requirements
+            session.add_assumption(
+                "Maximum conversation turns reached. Proceeding with available information, "
+                "which may be incomplete."
+            )
+            
             questions = (
                 "⚠️ Maximum conversation turns reached (circuit breaker activated).\n\n"
                 "I'll work with the information gathered so far to generate your Data PRP. "

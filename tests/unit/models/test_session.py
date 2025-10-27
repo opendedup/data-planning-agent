@@ -122,3 +122,40 @@ def test_extracted_requirement_creation() -> None:
     assert req.value == "Analyze sales trends"
     assert req.source_turn == 1
 
+
+def test_add_assumption() -> None:
+    """Test adding an assumption with auto-incrementing ID."""
+    session = PlanningSession(initial_intent="Test intent")
+
+    assumption1 = session.add_assumption("First assumption about data")
+    assumption2 = session.add_assumption("Second assumption about metrics")
+
+    assert len(session.assumptions) == 2
+    assert assumption1 == "[ASSUMPTION-01]: First assumption about data"
+    assert assumption2 == "[ASSUMPTION-02]: Second assumption about metrics"
+    assert session.assumptions[0] == "[ASSUMPTION-01]: First assumption about data"
+    assert session.assumptions[1] == "[ASSUMPTION-02]: Second assumption about metrics"
+
+
+def test_assumption_id_formatting() -> None:
+    """Test that assumption IDs are formatted with leading zeros."""
+    session = PlanningSession(initial_intent="Test intent")
+
+    # Add assumptions to reach ID 10
+    for i in range(10):
+        session.add_assumption(f"Assumption {i + 1}")
+
+    # Check that single-digit IDs have leading zeros
+    assert "[ASSUMPTION-01]:" in session.assumptions[0]
+    assert "[ASSUMPTION-09]:" in session.assumptions[8]
+    assert "[ASSUMPTION-10]:" in session.assumptions[9]
+
+
+def test_planning_session_includes_assumptions() -> None:
+    """Test that planning session is created with empty assumptions list."""
+    session = PlanningSession(initial_intent="Test intent")
+
+    assert hasattr(session, "assumptions")
+    assert session.assumptions == []
+    assert isinstance(session.assumptions, list)
+

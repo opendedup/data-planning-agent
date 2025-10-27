@@ -10,6 +10,7 @@ from mcp.types import Tool
 START_PLANNING_SESSION_TOOL = "start_planning_session"
 CONTINUE_CONVERSATION_TOOL = "continue_conversation"
 GENERATE_DATA_PRP_TOOL = "generate_data_prp"
+MODIFY_EXISTING_PRP_TOOL = "modify_existing_prp"
 
 
 def get_available_tools() -> list[Tool]:
@@ -97,6 +98,38 @@ def get_available_tools() -> list[Tool]:
                 "required": ["session_id"],
             },
         ),
+        Tool(
+            name=MODIFY_EXISTING_PRP_TOOL,
+            description=(
+                "Modify an existing Data Product Requirement Prompt (Data PRP) by providing "
+                "the current PRP content and describing the changes you want to make. "
+                "This starts a new planning session with the existing PRP as context, "
+                "allowing the agent to ask clarifying questions about your requested changes. "
+                "After the conversation, use generate_data_prp to create the updated PRP."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "existing_prp": {
+                        "type": "string",
+                        "description": (
+                            "The full content of the existing Data PRP (as markdown text). "
+                            "This provides the baseline context for the modifications."
+                        ),
+                    },
+                    "requested_changes": {
+                        "type": "string",
+                        "description": (
+                            "Description of the changes you want to make to the PRP. "
+                            "Examples: 'Add geographic breakdown by state', "
+                            "'Change the target audience to include executives', "
+                            "'Add a section about data quality requirements'"
+                        ),
+                    },
+                },
+                "required": ["existing_prp", "requested_changes"],
+            },
+        ),
     ]
 
 
@@ -140,6 +173,20 @@ def validate_tool_params(params: dict, tool_name: str) -> None:
             raise ValueError("output_path must be a string")
         if "save_to_file" in params and not isinstance(params["save_to_file"], bool):
             raise ValueError("save_to_file must be a boolean")
+
+    elif tool_name == MODIFY_EXISTING_PRP_TOOL:
+        if "existing_prp" not in params:
+            raise ValueError("Missing required parameter: existing_prp")
+        if "requested_changes" not in params:
+            raise ValueError("Missing required parameter: requested_changes")
+        if not isinstance(params["existing_prp"], str):
+            raise ValueError("existing_prp must be a string")
+        if not isinstance(params["requested_changes"], str):
+            raise ValueError("requested_changes must be a string")
+        if not params["existing_prp"].strip():
+            raise ValueError("existing_prp cannot be empty")
+        if not params["requested_changes"].strip():
+            raise ValueError("requested_changes cannot be empty")
 
     else:
         raise ValueError(f"Unknown tool: {tool_name}")
