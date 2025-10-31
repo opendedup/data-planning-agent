@@ -1,0 +1,93 @@
+# =============================================================================
+# Data Planning Agent - Docker Compose Configuration
+# =============================================================================
+# For local development and testing of the MCP service
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # MCP Service
+  mcp-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: data-planning-mcp
+    image: data-planning-agent:latest
+    
+    # Load environment variables from .env file
+    env_file:
+      - .env
+    
+    # Override specific variables for containerized deployment
+    environment:
+      - MCP_TRANSPORT=http  # Use HTTP for containerized deployment
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8082
+    
+    # Port mapping for HTTP transport
+    ports:
+      - "8082:8082"
+    
+    # Mount volumes for persistence
+    volumes:
+      # Mount output directory for generated PRPs
+      - ./output:/app/output
+      # Optional: Mount context directory for organizational context
+      - ./context.example:/app/context:ro
+      # Optional: Mount GCP credentials for local development
+      # - ~/.config/gcloud:/home/mcp/.config/gcloud:ro
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Health check against MCP /health endpoint
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Network
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    driver: bridge
+
+# =============================================================================
+# Usage:
+#
+# 1. Copy .env.example to .env and fill in your values
+# 2. Start the service:
+#    docker-compose up -d
+#
+# 3. View logs:
+#    docker-compose logs -f mcp-service
+#
+# 4. Stop the service:
+#    docker-compose down
+#
+# 5. Rebuild after code changes:
+#    docker-compose up -d --build
+# =============================================================================
+
